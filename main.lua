@@ -7,7 +7,7 @@ KSA.race = {
     start_transform = nil,
     finish = nil,
     start_time = nil,
-    player = nil,
+    playerid = nil,
     vehicleid = nil,
     distance_to_finish = 10,
     penalty_time = 0,
@@ -141,7 +141,7 @@ KSA.commands = {
                 executor:sendChatMessage("Race start and end positions not set")
                 return
             end
-            if KSA.race.player then
+            if KSA.race.playerid then
                 executor:sendChatMessage("A race is already in progress")
                 return
             end
@@ -152,7 +152,7 @@ KSA.commands = {
             end
             KSA.race.vehicleid = vehicle
             KSA.race.penalty_time = 0
-            KSA.race.player = executor
+            KSA.race.playerid = executor:getID()
             KSA.race.start_time = os.clock() + KSA.race.countdown_time
             KSA.race.countdown_timer = KSA.race.countdown_time -1
             send_message_broadcast("Race started by " .. executor:getName())
@@ -162,21 +162,36 @@ KSA.commands = {
                 KSA.race.start_transform[6], KSA.race.start_transform[7])
             -- Disable brake override to prevent players from jumping the start
             -- core_vehicleBridge.executeAction(getPlayerVehicle(0),'setFreeze', true)
-            KSA.race.player:sendLua("core_vehicleBridge.executeAction(getPlayerVehicle(0),'setFreeze', true)")
-            KSA.race.player:sendLua("guihooks.message(\"Get Ready!\")")
+            connections[KSA.race.playerid]:sendLua("core_vehicleBridge.executeAction(getPlayerVehicle(0),'setFreeze', true)")
+            connections[KSA.race.playerid]:sendLua("guihooks.message(\"Get Ready!\")")
             KSA.race.state = 1
         end
     },
-    blackflag = {
+    retire = {
         roles = {
             user = true,
             admin = true,
             superadmin = true
         },
         exec = function(executor, args)
-            if KSA.race.state == 2 then
-                send_message_broadcast("Race Cancelled!")
-                KSA.race.player = nil
+            if KSA.race.state == 2 and KSA.race.playerid == executor:getID() then
+                send_message_broadcast("Player: " .. executor:getName() .. " Retired from the Race")
+                KSA.race.playerid = nil
+                KSA.race.start_time = nil
+                KSA.race.state = 0
+                KSA.race.penalty_time = 0
+            end
+        end
+    },
+    dq = {
+        roles = {
+            superadmin = true,
+            admin = true
+        },
+        exec = function(executor, args)
+            if KSA.race.state == 2  then
+                send_message_broadcast("Player: " .. connections[KSA.race.playerid]:getName() .. " was disqualified from the Race")
+                KSA.race.playerid = nil
                 KSA.race.start_time = nil
                 KSA.race.state = 0
                 KSA.race.penalty_time = 0
@@ -435,14 +450,14 @@ hooks.register("Tick", "KSA_race_tick", function()
             print("Race Started")
             KSA.race.state = 2
             KSA.race.countdown_timer = nil
-            KSA.race.player:sendLua("core_vehicleBridge.executeAction(getPlayerVehicle(0),'setFreeze', false)")
-            KSA.race.player:sendLua("guihooks.message(\"GO!\")")
+            connections[KSA.race.playerid]:sendLua("core_vehicleBridge.executeAction(getPlayerVehicle(0),'setFreeze', false)")
+            connections[KSA.race.playerid]:sendLua("guihooks.message(\"GO!\")")
         else
             local remaining_time = math.floor(KSA.race.start_time - os.clock())
             --print("Race Starts in " .. (remaining_time) .. " seconds :".. (KSA.race.countdown_timer))
             if remaining_time == math.floor(KSA.race.countdown_timer) and KSA.race.countdown_timer > 0 then
                 print("Countdown: " .. tostring(KSA.race.countdown_timer))  
-                KSA.race.player:sendLua("guihooks.message(\"".. KSA.race.countdown_timer .."!\")")
+                connections[KSA.race.playerid]:sendLua("guihooks.message(\"".. KSA.race.countdown_timer .."!\")")
                 KSA.race.countdown_timer = KSA.race.countdown_timer - 1
             end
         end
@@ -455,7 +470,7 @@ hooks.register("Tick", "KSA_race_tick", function()
         -- print("Distance to finish: " .. tostring(distanceToFinish))
         if distanceToFinish < KSA.race.distance_to_finish then
 
-            KSA.race.player:sendLua("guihooks.message(\"Race Finished!\")")
+            connections[KSA.race.playerid]:sendLua("guihooks.message(\"Race Finished!\")")
             local base_time = (os.clock()) - KSA.race.start_time
             local total_time = base_time + KSA.race.penalty_time
             local b_minutes = math.floor(base_time / 60)
@@ -465,11 +480,11 @@ hooks.register("Tick", "KSA_race_tick", function()
             local t_seconds = total_time - t_minutes * 60
             local total_str = string.format("%d:%05.2f", t_minutes, t_seconds)
             send_message_broadcast("Race Finished!")
-            send_message_broadcast("Player: " .. KSA.race.player:getName() .. " Time = " .. base_str .. " (+" ..
+            send_message_broadcast("Player: " .. connections[KSA.race.playerid]:getName() .. " Time = " .. base_str .. " (+" ..
                                        tostring(KSA.race.penalty_time) .. "s penalty) Total = " .. total_str)
-            local index = add_leaderboard(total_time, KSA.race.player:getName())
+            local index = add_leaderboard(total_time, connections[KSA.race.playerid]:getName())
             send_message_broadcast("Your position on the leaderboard is: " .. tostring(index))
-            KSA.race.player = nil
+            KSA.race.playerid = nil
             KSA.race.start_time = nil
             KSA.race.state = 0
             KSA.race.penalty_time = 0
@@ -482,8 +497,8 @@ hooks.register("OnVehicleRemoved", "RacerRemoved", function(vehicle_id, client_i
     if KSA.race.state == 2 then
         if KSA.race.vehicleid == vehicle_id then
             send_message_broadcast("Race Cancelled!")
-            send_message_broadcast("Player: " .. KSA.race.player:getName() .. " Removed Vehicle")
-            KSA.race.player = nil
+            send_message_broadcast("Player: " .. connections[KSA.race.playerid]:getName() .. " Removed Vehicle")
+            KSA.race.playerid = nil
             KSA.race.start_time = nil
             KSA.race.state = 0
             KSA.race.penalty_time = 0
@@ -497,7 +512,7 @@ hooks.register("OnVehicleResetted", "RacerResetted", function(vehicle_id, client
     if KSA.race.state == 2 then
         print("in a race")
         if KSA.race.vehicleid == vehicle_id then
-            send_message_broadcast("Player: " .. KSA.race.player:getName() .. " Reset Vehicle: + " ..
+            send_message_broadcast("Player: " .. connections[KSA.race.playerid]:getName() .. " Reset Vehicle: + " ..
                                        KSA.race.penalty_for_reset .. "s")
             KSA.race.penalty_time = KSA.race.penalty_for_reset + KSA.race.penalty_time
         end
